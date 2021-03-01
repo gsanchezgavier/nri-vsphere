@@ -12,7 +12,7 @@ env:
   REPO_FULL_NAME: ${{ github.event.repository.full_name }}
   ORIGINAL_REPO_NAME: "newrelic/nri-vsphere"
   GO_VERSION: '1.15.7'
-
+  OHAI_DOCKER_HUB_ID: secrets.OHAI_DOCKER_HUB_ID
 jobs:
   validate:
     name: Validate code via linters
@@ -20,6 +20,7 @@ jobs:
     steps:
       - uses: actions/checkout@v2
       - name: Login to DockerHub
+        if: ${{ OHAI_DOCKER_HUB_ID }}
         uses: docker/login-action@v1
         with:
           username: ${{ secrets.OHAI_DOCKER_HUB_ID }}
