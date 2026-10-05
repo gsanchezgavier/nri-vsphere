@@ -1,0 +1,72 @@
+name: Agent Control e2e
+
+on:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Released nri-vsphere version to package (e.g. 1.8.6). Defaults to the latest release.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  agent-control-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve the nri-vsphere version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          if [ -z "$REQUESTED_VERSION" ]; then
+            REQUESTED_VERSION=$(gh release view --repo newrelic/nri-vsphere --json tagName --jq .tagName)
+          fi
+          echo "VSPHERE_VERSION=${REQUESTED_VERSION#v}" >> "$GITHUB_ENV"
+
+      # Mirrors the repackaging that the release pipeline does: keep only the listed files, flat at the package root.
+      - name: Download, filter and repackage the release artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          asset="nri-vsphere_linux_${VSPHERE_VERSION}_amd64.tar.gz"
+          keep_files=(
+            var/db/newrelic-infra/newrelic-integrations/bin/nri-vsphere
+            etc/newrelic-infra/integrations.d/vsphere-performance.metrics
+          )
+
+          work=$(mktemp -d)
+          mkdir -p "$work/extracted" "$work/dist"
+          gh release download "v${VSPHERE_VERSION}" --repo newrelic/nri-vsphere --pattern "$asset" --dir "$work"
+          tar xf "$work/$asset" -C "$work/extracted"
+
+          for keep_file in "${keep_files[@]}"; do
+            if [ ! -f "$work/extracted/$keep_file" ]; then
+              echo "keep_files entry '$keep_file' not found after extracting $asset" >&2
+              exit 1
+            fi
+            cp "$work/extracted/$keep_file" "$work/dist/"
+          done
+
+          tar czf "$GITHUB_WORKSPACE/nri-vsphere.tar.gz" -C "$work/dist" .
+          tar tzf "$GITHUB_WORKSPACE/nri-vsphere.tar.gz"
+
+      - name: Start the fake vCenter
+        run: docker run -d --name vcsim -p 8989:8989 vmware/vcsim:latest
+
+      - name: Test the agent type with Agent Control
+        uses: newrelic/newrelic-agent-control/.github/actions/test-ohi-agent@gsanchez/feat/e2e-action
+        with:
+          agent-type-file: .fleetControl/agentControl/linux.yml
+          package-file: nri-vsphere.tar.gz
+          config-file: .fleetControl/agentControl/linux.e2e-config.yml
+          nrql-assertion: "SELECT * FROM VSphereHostSample WHERE `test.id` = '{{test_id}}' LIMIT 1"
+          nr-license-key: ${{ secrets.E2E_LICENSE_KEY }}
+          nr-api-key: ${{ secrets.E2E_API_KEY }}
+          nr-account-id: ${{ secrets.E2E_ACCOUNT_ID }}
+          nr-region: ${{ vars.NR_REGION || 'us' }}
