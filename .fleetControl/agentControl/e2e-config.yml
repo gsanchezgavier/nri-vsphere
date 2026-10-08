@@ -1,0 +1,9 @@
+config:
+  integrations:
+    - name: nri-vsphere
+      env:
+        URL: https://127.0.0.1:8989/sdk
+        USER: user
+        PASS: pass
+        ENABLE_VSPHERE_EVENTS: "true"
+      interval: 60s
